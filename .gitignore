@@ -1,0 +1,4 @@
+venv/
+src/agent_2048.egg-info
+src/agent_2048/__pycache__/
+.vscode/
