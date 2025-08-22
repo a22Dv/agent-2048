@@ -82,7 +82,7 @@ class Visual:
         points: List[Tuple[int, int]] = Visual.get_grid_central_intersects(contour)
         for point in points:
             for i, channel in enumerate(img[point[1]][point[0]]):
-                if not Utils.threshold(channel, SHADE[i] - 5, SHADE[i] + 5):
+                if not Utils.threshold(channel, SHADE[i] - 15, SHADE[i] + 15):
                     return False
         return True
 
@@ -147,11 +147,15 @@ class Visual:
                 cell_rs: np.ndarray[Any, Any] = cv2.resize(
                     cell_crp,
                     (cell_crp.shape[1] * self.SCALE_FACTOR, cell_crp.shape[0] * self.SCALE_FACTOR),
-                    interpolation=cv2.INTER_LINEAR,
+                    interpolation=cv2.INTER_NEAREST,
                 )
                 _, cell_th = cv2.threshold(
                     cell_rs, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
                 )
+                # while True:
+                #     cv2.imshow("", cell_th)
+                #     if Utils.wait("q"):
+                #         break
                 output = self.reader.recognize(
                     img_cv_grey=cell_th, allowlist="0123456789"
                 )

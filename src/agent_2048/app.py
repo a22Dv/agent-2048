@@ -23,24 +23,24 @@ class Action(Enum):
 class Algorithm(Enum):
     RANDOM = 0
     EXPECTIMAX = 1
-    RULE_BASED = 2
+    MCTS = 2
 
 class Application:
     game_state : List[int] = []
     vis : Visual = Visual()
-    algo : Algorithm = Algorithm.RULE_BASED
+    algo : Algorithm = Algorithm.MCTS
     SCALE_FACTOR : int = 3
     OVERLAY_COLOR : Tuple[int, ...] = (0, 255, 0)
     FONT : int = cv2.FONT_HERSHEY_PLAIN
     FONT_SIZE : float = 0.8
-    LATENCY : float = 0.25
+    LATENCY : float = 0.1
     LIB : ctypes.CDLL = ctypes.CDLL(Path(__file__).parent / "eval.dll")
 
     def __init__(self) -> None:
         self.LIB.expectimax.argtypes = [ctypes.POINTER(ctypes.c_int)]
         self.LIB.expectimax.restype = ctypes.c_int
-        self.LIB.rule_based.argtypes = [ctypes.POINTER(ctypes.c_int)]
-        self.LIB.rule_based.restype = ctypes.c_int
+        self.LIB.mcts.argtypes = [ctypes.POINTER(ctypes.c_int)]
+        self.LIB.mcts.restype = ctypes.c_int
 
     def run(self) -> None:
 
@@ -48,13 +48,13 @@ class Application:
         while True:
             os.system("cls")
             print(f"Options:")
-            for s in [f"[{i}] {a}" for i, a in [(0, "RANDOM"), (1, "EXPECTIMAX"), (2, "RULE-BASED")]]:
+            for s in [f"[{i}] {a}" for i, a in [(0, "RANDOM"), (1, "EXPECTIMAX"), (2, "MONTE-CARLO TREE SEARCH")]]:
                 print(s)
             user_input: str = input("Enter algorithm no.: ")
             if not user_input.isnumeric():
                 continue
             value : int = int(user_input)
-            self.algo = Algorithm(value) if value < 3 and value >= 0 else Algorithm.RULE_BASED
+            self.algo = Algorithm(value) if value < 3 and value >= 0 else Algorithm.MCTS
             break
 
         os.system("cls")
@@ -104,8 +104,8 @@ class Application:
         match self.algo:
             case Algorithm.RANDOM:
                 return random.choice([Action.UP, Action.DOWN, Action.LEFT, Action.RIGHT])
-            case Algorithm.RULE_BASED:
-                return Action(self.LIB.rule_based((ctypes.c_int * len(self.game_state))(*self.game_state)))
+            case Algorithm.MCTS:
+                return Action(self.LIB.mcts((ctypes.c_int * len(self.game_state))(*self.game_state)))
             case Algorithm.EXPECTIMAX:
                 return Action(self.LIB.expectimax((ctypes.c_int * len(self.game_state))(*self.game_state)))
     
