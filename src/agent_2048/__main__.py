@@ -1,3 +1,8 @@
-from . import eval
+from . import agent as agnt
 
-print(eval.evaluate([1,2,3], 1))
+def main() -> None:
+    m_agnt : agnt.Agent = agnt.Agent()
+    m_agnt.run()
+
+if __name__ == "__main__":
+    main()
