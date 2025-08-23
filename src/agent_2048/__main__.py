@@ -1,8 +1,3 @@
-from agent_2048.app import Application
+from . import eval
 
-def main() -> None:
-    app : Application = Application()
-    app.run()
-
-if __name__ == "__main__":
-    main()
+print(eval.evaluate([1,2,3], 1))

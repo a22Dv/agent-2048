@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent_2048"
-version = "0.1.0"
-description = "An program that's able to play the game 2048."
+version = "1.0.0"
+description = "An agent that's able to play the game 2048."
 
 [tool.setuptools]
 package-dir = {"" = "src"}
