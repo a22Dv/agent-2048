@@ -59,6 +59,8 @@ def detect_grid(img: Image) -> Tuple[bool, Image, Rect]:
     # Filter by no. of children.
     cn: Image = cv.Canny(img, CNNY_LOWER, CNNY_UPPER)
     contours, hrchy = cv.findContours(cn, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
+    if hrchy is None:
+        return (False, img, (-1, -1, -1, -1))
     wch_msk: np.ndarray[Any, Any] = hrchy[0, :, CTopology.FIRST_CHILD] != CTopology.NULL
     hrchy_wch: np.ndarray[Any, Any] = hrchy[0, wch_msk]
     cnt_wch: List[np.ndarray[Any, Any]] = [
@@ -235,12 +237,6 @@ class Recognizer:
             )
             for _ in range(SYMBOL_COUNT)
         ]
-        # Up to 6 digits.
-        self.trie: Dict[Entry, int] = {}
-        for e in range(1, 18):
-            n: int = 2**e
-            ns: str = str(n)
-            self.trie[Entry(len(ns), int(ns[0]))] = n
         self.exp_diff: int = 2
         self.max_loss_y: float = TMPLT_X * ((TMPLT_Y * 255) ** self.exp_diff)
         self.max_loss_x: float = TMPLT_Y * ((TMPLT_X * 255) ** self.exp_diff)
@@ -286,15 +282,18 @@ class Recognizer:
         dgts: List[Tuple[int, float]] = []
         for bbox in bboxes:
             x, y, w, h = bbox
-            dgtsig: Template = self.reduce(cv.resize(img[y : y + h, x : x + w], (TMPLT_X, TMPLT_Y)))
-            sim: List[float] = [self._getsim(dgtsig, Symbol(i)) for i in range(SYMBOL_COUNT)]
+            dgtsig: Template = self.reduce(
+                cv.resize(img[y : y + h, x : x + w], (TMPLT_X, TMPLT_Y))
+            )
+            sim: List[float] = [
+                self._getsim(dgtsig, Symbol(i)) for i in range(SYMBOL_COUNT)
+            ]
             msym: int = max(range(10), key=lambda x: sim[x])
             dgts.append((msym, sim[msym]))
         pr = 0
         for s, _ in dgts:
             pr *= 10
             pr += s
-        print(pr, sum([si for _, si in dgts]) / len(dgts))
         return (pr, sum([si for _, si in dgts]) / len(dgts))
 
     def add_template(self, img: Image, val: int) -> None:
@@ -344,7 +343,9 @@ class Recognizer:
         for dgt in clls:
             # Get raw contours, exclude empty tiles.
             cnd: Image = cv.ximgproc.thinning(cv.Canny(dgt, CNNY_LOWER, CNNY_UPPER))
-            cccntrs, cchrchy = cv.findContours(cnd, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
+            cccntrs, cchrchy = cv.findContours(
+                cnd, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE
+            )
             if len(cccntrs) == 0:
                 if not self.is_recognized[Symbol.EMPTY]:
                     unq_sym += 1
@@ -365,7 +366,7 @@ class Recognizer:
                 if area in dgts:
                     continue
                 diff.add(area)
-    
+
             if len(dgts) > 1:
                 raise ValueError(
                     "Initial dataset contains a number with more than 1 digit."
@@ -375,7 +376,7 @@ class Recognizer:
                 raise ValueError(
                     "Initial dataset contains a number with more than 1 internal contour."
                 )
-            
+
             # Set digit.
             if in_cntr == 0:
                 if not self.is_recognized[Symbol.S2]:
@@ -399,7 +400,9 @@ class Recognizer:
         self.bootstrapped = True
 
 
-def get_state(digits: List[Image], rcg: Recognizer) -> Tuple[bool, Tuple[int, ...]]:
+def get_state(
+    digits: List[Image], rcg: Recognizer
+) -> Tuple[bool, Tuple[Tuple[int, float], ...]]:
     """
     Extracts the digits from the list of images.
     """
@@ -410,23 +413,14 @@ def get_state(digits: List[Image], rcg: Recognizer) -> Tuple[bool, Tuple[int, ..
     # only runs the first time it is called.
     rcg.bootstrap(digits)
 
-    state: List[int] = []
-    for i, d in enumerate(digits):
+    state: List[Tuple[int, float]] = []
+    for d in digits:
         cnd: Image = cv.Canny(d, CNNY_LOWER, CNNY_UPPER)
         cntrs, _ = cv.findContours(cnd, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
         d_count: int = len(cntrs)
         if d_count == 0:
-            state.append(0)
+            state.append((0, 1.0))
             continue
-        tile, sml = rcg.match(d)
-        print(tile, sml)
-
-    # TODO:
-    # Find a way to reliably get the digits without getting an OCR library.
-    #   - Bootstrap 2 and 4 via child contour recognition. (4 has a hole, 2 doesn't.)
-    #   - Subdivide and normalize image into a 5x5, do a dot product based on pre-determined weights
-    #     (Center pixels matter more). Translate into high dimensional vector, and add a digit dimension
-    #     with a large weight. 2 digits and 4 digits should be far apart. Then track merges and learn as you
-    #     go.
-
-    return (True, ())
+        out, sc = rcg.match(d)
+        state.append((out, float(sc)))
+    return (True, tuple(state))
