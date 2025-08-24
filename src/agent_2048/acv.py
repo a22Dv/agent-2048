@@ -1,11 +1,14 @@
-import pyautogui as gui
 import cv2 as cv
 from cv2.typing import Rect
 import numpy as np
+import pyautogui as gui
+from PIL import ImageGrab
+from mss.base import MSSBase
+from mss.models import Monitor
 from enum import IntEnum
 from .types import Image
 from typing import Tuple, List, Any
-from .utils import dbg_show
+from .utils import dbg_show, dbg_profile
 
 
 class CTopology(IntEnum):
@@ -23,22 +26,27 @@ class RectLayout(IntEnum):
     HEIGHT = 3
 
 
-def screen_cap(scale: float, shrink: bool, gray: bool) -> Image:
+def screen_cap(
+    sct: MSSBase, b_rect: Rect
+) -> Image:
     """
-    Sends a screenshot of the current display.
+    Sends a screenshot of the current display. Passing b_rect with just -1 
+    makes it capture the entire display.Scaling will be ignored if a capture
+    target is provided via b_rect
     """
-    scr: Image = np.array(gui.screenshot())
-    scl: float = 1 / scale if shrink else scale
-    x, y = (int(scr.shape[1] * scl), int(scr.shape[0] * scl))
-    return cv.cvtColor(
-        cv.resize(scr, (x, y), interpolation=cv.INTER_LINEAR),
-        cv.COLOR_BGR2GRAY if gray else cv.COLOR_BGR2RGB,
+    no_cptr_trgt: bool = all([v == -1 for v in b_rect])
+    monitor: Monitor = (
+        sct.monitors[1]
+        if no_cptr_trgt
+        else {k: int(v) for k, v in zip(("left", "top", "width", "height"), b_rect)}
     )
+    scr: Image = np.asarray(sct.grab(monitor))
+    return scr
 
 
-def detect_grid(img: Image) -> Tuple[bool, Image]:
+def detect_grid(img: Image) -> Tuple[bool, Image, Rect]:
     """
-    Detects a 2048 grid on the display and returns the status and image.
+    Detects a 2048 grid on the display and returns the status, image, and location.
     """
     CLEARANCE: float = 0.01
     MINIMUM: float = 500.0
@@ -46,6 +54,7 @@ def detect_grid(img: Image) -> Tuple[bool, Image]:
     CNNY_LOWER: float = 60.0
     ASP_MIN: float = 1.0 - CLEARANCE
     ASP_MAX: float = 1.0 + CLEARANCE
+    PADDING: int = 10
 
     # Filter by no. of children.
     cn: Image = cv.Canny(img, CNNY_LOWER, CNNY_UPPER)
@@ -90,15 +99,15 @@ def detect_grid(img: Image) -> Tuple[bool, Image]:
             grid_idx = i
             break
     if grid_idx == -1:
-        return (False, img)
-    gx, gy, gh, gw = [int(g) for g in cnt_sq[grid_idx]]
+        return (False, img, (-1, -1, -1, -1))
+    gx, gy, gw, gh = [int(g) for g in cnt_sq[grid_idx]]
     scl_img: np.ndarray[Any, Any] = img[gy : gy + gh, gx : gx + gw, :]
-    return (True, scl_img)
+    return (True, scl_img, (gx - PADDING // 2, gy - PADDING // 2, gw + PADDING, gh + PADDING))
 
 
 def crp(img: Image, prcnt: float) -> Image:
     cx, cy = int(img.shape[1] * prcnt), int(img.shape[0] * prcnt)
-    h, w = img.shape[1], img.shape[0]
+    w, h = img.shape[1], img.shape[0]
     return img[cx : w - cx, cy : h - cy]
 
 
@@ -155,13 +164,15 @@ def detect_digits(grid: Image) -> Tuple[bool, List[Image]]:
                 cth = np.where(cth < m, 255, 0).astype(np.uint8)
             clpx.append(
                 cv.resize(
-                    cth, (cth.shape[1] * CLL_SCL_FCTR, cth.shape[0] * CLL_SCL_FCTR),
-                    interpolation=cv.INTER_LINEAR_EXACT
+                    cth,
+                    (cth.shape[1] * CLL_SCL_FCTR, cth.shape[0] * CLL_SCL_FCTR),
+                    interpolation=cv.INTER_LINEAR_EXACT,
                 )
             )
     if len(clpx) != GRID_CLL_COUNT:
         return (False, [])
     return (True, clpx)
+
 
 def get_state(digits: List[Image]) -> Tuple[bool, Tuple[int, ...]]:
     """
@@ -172,4 +183,18 @@ def get_state(digits: List[Image]) -> Tuple[bool, Tuple[int, ...]]:
     for d in digits:
         cnd: Image = cv.Canny(d, CNNY_LOWER, CNNY_UPPER)
         dbg_show(d)
+
+    # TODO:
+    # Find a way to determine cells that are empty or not.
+    #   - Filter via the entropy of each row with cells in
+    #     the center weighed more than at the edges.
+    #     basically allowing us to get a feel for which cells
+    #     have more "action" in the middle. Thus, empty or not.
+    # Find a way to reliably get the digits without getting an OCR library.
+    #   - Bootstrap 2 and 4 via child contour recognition. (4 has a hole, 2 doesn't.)
+    #   - Subdivide and normalize image into a 5x5, do a dot product based on pre-determined weights
+    #     (Center pixels matter more). Translate into high dimensional vector, and add a digit dimension
+    #     with a large weight. 2 digits and 4 digits should be far apart. Then track merges and learn as you
+    #     go.
+
     return (True, ())

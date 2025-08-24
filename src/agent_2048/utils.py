@@ -11,7 +11,9 @@ def dbg_show(img: Image) -> None:
         cv.imshow("", img)
         if (wait("q")):
             break
-        
+
+def dbg_close() -> None:
+    cv.destroyAllWindows() 
 def dbg_profile(func : Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     st: float = perf_counter()
     ret: Any = func(*args, **kwargs)
