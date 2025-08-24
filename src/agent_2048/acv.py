@@ -1,14 +1,16 @@
 import cv2 as cv
-from cv2.typing import Rect
 import numpy as np
-import pyautogui as gui
-from PIL import ImageGrab
+from cv2.typing import Rect
+from copy import copy
 from mss.base import MSSBase
 from mss.models import Monitor
 from enum import IntEnum
-from .types import Image
-from typing import Tuple, List, Any
-from .utils import dbg_show, dbg_profile
+from .types import Image, Template
+from typing import Tuple, List, Any, Dict, Set
+from .utils import dbg_show, dbg_profile, dbg_close
+from typing import NamedTuple
+
+GRID_CLL_COUNT: int = 16
 
 
 class CTopology(IntEnum):
@@ -26,11 +28,9 @@ class RectLayout(IntEnum):
     HEIGHT = 3
 
 
-def screen_cap(
-    sct: MSSBase, b_rect: Rect
-) -> Image:
+def screen_cap(sct: MSSBase, b_rect: Rect) -> Image:
     """
-    Sends a screenshot of the current display. Passing b_rect with just -1 
+    Sends a screenshot of the current display. Passing b_rect with just -1
     makes it capture the entire display.Scaling will be ignored if a capture
     target is provided via b_rect
     """
@@ -88,7 +88,7 @@ def detect_grid(img: Image) -> Tuple[bool, Image, Rect]:
     # Will be fooled by grids of the same dimensions but isn't the game.
     # But it isn't really a bad compromise.
     grid_idx: int = -1
-    GRID_CELLS: int = 16
+    GRID_CELLS: int = GRID_CLL_COUNT
     for i, h in enumerate(hrchy_sq):
         fchild: np.ndarray[Any, Any] = hrchy[0][h[CTopology.FIRST_CHILD]]
         for _ in range(GRID_CELLS - 1):
@@ -102,7 +102,11 @@ def detect_grid(img: Image) -> Tuple[bool, Image, Rect]:
         return (False, img, (-1, -1, -1, -1))
     gx, gy, gw, gh = [int(g) for g in cnt_sq[grid_idx]]
     scl_img: np.ndarray[Any, Any] = img[gy : gy + gh, gx : gx + gw, :]
-    return (True, scl_img, (gx - PADDING // 2, gy - PADDING // 2, gw + PADDING, gh + PADDING))
+    return (
+        True,
+        scl_img,
+        (gx - PADDING // 2, gy - PADDING // 2, gw + PADDING, gh + PADDING),
+    )
 
 
 def crp(img: Image, prcnt: float) -> Image:
@@ -117,79 +121,307 @@ def detect_digits(grid: Image) -> Tuple[bool, List[Image]]:
     """
     CNNY_UPPER: float = 180.0
     CNNY_LOWER: float = 60.0
-    EDGE_TOLERANCE: int = 5
-    CLL_CRP: float = 0.20
+    EDGE_TOLERANCE: int = 10
+    CLL_CRP: float = 0.15
     CLL_X_BIAS: int = 0
     CLL_Y_BIAS: int = -1
-    GRID_CLL_COUNT: int = 16
     INVERT_THRESHOLD: float = 128.0
+    FILTER_THRESHOLD: float = 0.15
+    DEVIATION_THRESHOLD: float = 1.5
     CLL_SCL_FCTR: int = 3
 
-    # Preprocess grid and find cells.
-    cgrid: Image = crp(grid, 0.02)
+    # Preprocess grid and find cells, filter via area difference to largest contour.
+    cgrid: Image = crp(grid, 0.015)
     cn: Image = cv.Canny(cgrid, CNNY_LOWER, CNNY_UPPER)
     cntrs, _ = cv.findContours(cn, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
     cells: List[Rect] = [cv.boundingRect(c) for c in cntrs]
-    cells.sort(key=lambda e: (e[1] // EDGE_TOLERANCE, e[0]))
-    clpx: List[Image] = []
+    mx_c: Rect = max(cells, key=lambda c: c[RectLayout.HEIGHT] * c[RectLayout.WIDTH])
+    mxa_c: float = mx_c[RectLayout.HEIGHT] * mx_c[RectLayout.WIDTH]
+    fc: List[Rect] = list(
+        filter(
+            lambda c: 1 - (c[RectLayout.HEIGHT] * c[RectLayout.WIDTH]) / mxa_c
+            < FILTER_THRESHOLD,
+            cells,
+        )
+    )
+    fc.sort(
+        key=lambda e: (
+            e[RectLayout.Y_COORD] // EDGE_TOLERANCE,
+            e[RectLayout.X_COORD] // EDGE_TOLERANCE,
+        )
+    )
 
-    # Crop and get average area.
+    # Crop, adjust, and get average area.
+    clpx: List[Image] = []
     avg: float = 0.0
-    for i, cl in enumerate(cells):
+    for i, cl in enumerate(fc):
         x, y, w, h = cl
         nw, nh = int(w * (1 - CLL_CRP)), int(h * (1 - CLL_CRP))
         nx, ny = x + ((w - nw) // 2), y + ((h - nh) // 2)
         nx += CLL_X_BIAS
         ny += CLL_Y_BIAS
-        cells[i] = (nx, ny, nw, nh)
+        fc[i] = (nx, ny, nw, nh)
         avg += nw * nh
-    avg /= len(cells)
-    th: float = avg * 0.15
+    avg /= len(fc)
 
-    # Threshold by central tendency.
-    for i, cl in enumerate(cells):
+    # Cannot filter the noise from the data.
+    if len(fc) != GRID_CLL_COUNT:
+        return (False, [])
+
+    for i, cl in enumerate(fc):
         x, y, w, h = cl
-        if abs(avg - (w * h)) < th:
-            cll_gscl: Image = cv.cvtColor(
-                cgrid[y : y + h, x : x + w], cv.COLOR_RGB2GRAY
-            )
-            _, cth = cv.threshold(
+        cll_gscl: Image = cv.cvtColor(cgrid[y : y + h, x : x + w], cv.COLOR_RGB2GRAY)
+
+        # Standard deviation is used to threshold empty cells.
+        std_dev: float = float(np.std(cll_gscl))
+        _, cth = (
+            cv.threshold(
                 cll_gscl,
-                0,
+                128,
                 255,
                 cv.THRESH_BINARY + cv.THRESH_OTSU,
             )
-            m: float = float(np.mean(cth.astype(np.float32)))
-            if m > INVERT_THRESHOLD:
-                cth = np.where(cth < m, 255, 0).astype(np.uint8)
-            clpx.append(
-                cv.resize(
-                    cth,
-                    (cth.shape[1] * CLL_SCL_FCTR, cth.shape[0] * CLL_SCL_FCTR),
-                    interpolation=cv.INTER_LINEAR_EXACT,
-                )
+            if std_dev > DEVIATION_THRESHOLD
+            else (0.0, np.zeros(dtype=np.uint8, shape=cll_gscl.shape))
+        )
+        m: float = float(np.mean(cth.astype(np.float32)))
+        if m > INVERT_THRESHOLD:
+            cth = cv.bitwise_not(cth)
+        clpx.append(
+            cv.resize(
+                cth,
+                (cth.shape[1] * CLL_SCL_FCTR, cth.shape[0] * CLL_SCL_FCTR),
+                interpolation=cv.INTER_LINEAR_EXACT,
             )
+        )
+
     if len(clpx) != GRID_CLL_COUNT:
         return (False, [])
     return (True, clpx)
 
 
-def get_state(digits: List[Image]) -> Tuple[bool, Tuple[int, ...]]:
+class Symbol(IntEnum):
+    S0 = 0
+    S1 = 1
+    S2 = 2
+    S3 = 3
+    S4 = 4
+    S5 = 5
+    S6 = 6
+    S7 = 7
+    S8 = 8
+    S9 = 9
+    EMPTY = 10
+
+
+TMPLT_X: int = 32
+TMPLT_Y: int = 64
+SYMBOL_COUNT: int = 11
+
+
+class Entry(NamedTuple):
+    dcount: int
+    msd: int
+
+
+class Recognizer:
+    def __init__(self) -> None:
+        self.bootstrapped: bool = False
+        self.is_recognized: List[bool] = [False for _ in range(SYMBOL_COUNT)]
+        self.templates: List[Template] = [
+            (
+                np.zeros(dtype=np.int32, shape=(TMPLT_X,)),
+                np.zeros(dtype=np.int32, shape=(TMPLT_Y,)),
+            )
+            for _ in range(SYMBOL_COUNT)
+        ]
+        # Up to 6 digits.
+        self.trie: Dict[Entry, int] = {}
+        for e in range(1, 18):
+            n: int = 2**e
+            ns: str = str(n)
+            self.trie[Entry(len(ns), int(ns[0]))] = n
+        self.exp_diff: int = 2
+        self.max_loss_y: float = TMPLT_X * ((TMPLT_Y * 255) ** self.exp_diff)
+        self.max_loss_x: float = TMPLT_Y * ((TMPLT_X * 255) ** self.exp_diff)
+
+    def reduce(self, img: Image) -> Template:
+        """
+        Normalizes and reduces the image into a pixel density histogram for both axes.
+        """
+        return (
+            np.sum(img, axis=0, dtype=np.int32),
+            np.sum(img, axis=1, dtype=np.int32),
+        )
+
+    def _getsim(self, tmplt: Template, sym: Symbol) -> float:
+        a: Template = tmplt
+        b: Template = self.templates[sym]
+        ly: float = np.sum((a[0] - b[0]) ** self.exp_diff)
+        lx: float = np.sum((a[1] - b[1]) ** self.exp_diff)
+        lt: float = max(lx / self.max_loss_x, ly / self.max_loss_y)
+        return 1 - lt
+
+    def match(self, img: Image) -> Tuple[int, float]:
+        """
+        Returns the most likely match for any tile given.
+        To be able to recognize new tiles, add_template() must
+        be called before match().
+        """
+        CNNY_UPPER: float = 180.0
+        CNNY_LOWER: float = 60.0
+
+        cny: Image = cv.Canny(img, CNNY_LOWER, CNNY_UPPER)
+        cntrs, _ = cv.findContours(cny, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+        bboxes: List[Rect] = sorted(
+            [cv.boundingRect(c) for c in cntrs],
+            key=lambda e: e[RectLayout.X_COORD],
+        )
+
+        # Empty.
+        if len(bboxes) == 0:
+            return (0, 1.0)
+
+        # Get similarity scores for each digit.
+        dgts: List[Tuple[int, float]] = []
+        for bbox in bboxes:
+            x, y, w, h = bbox
+            dgtsig: Template = self.reduce(cv.resize(img[y : y + h, x : x + w], (TMPLT_X, TMPLT_Y)))
+            sim: List[float] = [self._getsim(dgtsig, Symbol(i)) for i in range(SYMBOL_COUNT)]
+            msym: int = max(range(10), key=lambda x: sim[x])
+            dgts.append((msym, sim[msym]))
+        pr = 0
+        for s, _ in dgts:
+            pr *= 10
+            pr += s
+        print(pr, sum([si for _, si in dgts]) / len(dgts))
+        return (pr, sum([si for _, si in dgts]) / len(dgts))
+
+    def add_template(self, img: Image, val: int) -> None:
+        """
+        Parses an image and gets the constituent digits.
+        Updates internal templates based on value/label provided.
+        """
+        CNNY_UPPER: float = 180.0
+        CNNY_LOWER: float = 60.0
+        cny: Image = cv.Canny(img, CNNY_LOWER, CNNY_UPPER)
+        cntrs, _ = cv.findContours(cny, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+        bboxes: List[Rect] = sorted(
+            [cv.boundingRect(c) for c in cntrs],
+            key=lambda e: e[RectLayout.X_COORD],
+            reverse=True,
+        )
+        if len(bboxes) == 0 and not self.is_recognized[Symbol.EMPTY]:
+            rsz_img: Image = cv.resize(img, (TMPLT_X, TMPLT_Y))
+            self.templates[Symbol.EMPTY] = self.reduce(rsz_img)
+        n: int = val
+
+        for bbox in bboxes:
+            x, y, w, h = bbox
+            c_digit: int = n % 10
+            n //= 10
+            if self.is_recognized[c_digit]:
+                continue
+            rsz_digit: Image = cv.resize(img[y : y + h, x : x + w], (TMPLT_X, TMPLT_Y))
+            self.templates[c_digit] = self.reduce(rsz_digit)
+            self.is_recognized[c_digit] = True
+
+    def bootstrap(self, clls: List[Image]) -> None:
+        """
+        Bootstraps the recognizer on the digits.
+        The image list MUST be clear, white on black,
+        and must only contain either empty images,
+        2, or 4. This can only be called once at the
+        start of any session.
+        """
+        if self.bootstrapped:
+            return
+
+        CNNY_UPPER: float = 180.0
+        CNNY_LOWER: float = 60.0
+        unq_sym: int = 0
+        rcgnz: List[bool] = [False for _ in range(3)]
+        for dgt in clls:
+            # Get raw contours, exclude empty tiles.
+            cnd: Image = cv.ximgproc.thinning(cv.Canny(dgt, CNNY_LOWER, CNNY_UPPER))
+            cccntrs, cchrchy = cv.findContours(cnd, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
+            if len(cccntrs) == 0:
+                if not self.is_recognized[Symbol.EMPTY]:
+                    unq_sym += 1
+                self.is_recognized[Symbol.EMPTY] = True
+                rcgnz[0] = True
+                self.add_template(dgt, -1)
+                continue
+
+            # Exclude duplicated contours.
+            dgts: Set[int] = set()
+            diff: Set[int] = set()
+            for i, hrchy in enumerate(cchrchy[0]):
+                _, _, w, h = cv.boundingRect(cccntrs[i])
+                area: int = w * h
+                if hrchy[CTopology.PARENT] == CTopology.NULL:
+                    dgts.add(area)
+                    continue
+                if area in dgts:
+                    continue
+                diff.add(area)
+    
+            if len(dgts) > 1:
+                raise ValueError(
+                    "Initial dataset contains a number with more than 1 digit."
+                )
+            in_cntr: int = len(diff)
+            if in_cntr > 1:
+                raise ValueError(
+                    "Initial dataset contains a number with more than 1 internal contour."
+                )
+            
+            # Set digit.
+            if in_cntr == 0:
+                if not self.is_recognized[Symbol.S2]:
+                    unq_sym += 1
+                rcgnz[1] = True
+                self.add_template(dgt, 2)
+                continue
+            elif in_cntr == 1:
+                if not self.is_recognized[Symbol.S4]:
+                    unq_sym += 1
+                rcgnz[2] = True
+                self.add_template(dgt, 4)
+                continue
+            if all(rcgnz):
+                break
+
+        if sum(rcgnz) != unq_sym:
+            raise ValueError(
+                "Could not initialize recognizer. Failed to distinguish initial symbols."
+            )
+        self.bootstrapped = True
+
+
+def get_state(digits: List[Image], rcg: Recognizer) -> Tuple[bool, Tuple[int, ...]]:
     """
     Extracts the digits from the list of images.
     """
     CNNY_UPPER: float = 180.0
     CNNY_LOWER: float = 60.0
-    for d in digits:
+
+    # Handles setting internal variables.
+    # only runs the first time it is called.
+    rcg.bootstrap(digits)
+
+    state: List[int] = []
+    for i, d in enumerate(digits):
         cnd: Image = cv.Canny(d, CNNY_LOWER, CNNY_UPPER)
-        dbg_show(d)
+        cntrs, _ = cv.findContours(cnd, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+        d_count: int = len(cntrs)
+        if d_count == 0:
+            state.append(0)
+            continue
+        tile, sml = rcg.match(d)
+        print(tile, sml)
 
     # TODO:
-    # Find a way to determine cells that are empty or not.
-    #   - Filter via the entropy of each row with cells in
-    #     the center weighed more than at the edges.
-    #     basically allowing us to get a feel for which cells
-    #     have more "action" in the middle. Thus, empty or not.
     # Find a way to reliably get the digits without getting an OCR library.
     #   - Bootstrap 2 and 4 via child contour recognition. (4 has a hole, 2 doesn't.)
     #   - Subdivide and normalize image into a 5x5, do a dot product based on pre-determined weights

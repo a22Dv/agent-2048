@@ -3,7 +3,7 @@ from mss.base import MSSBase
 from cv2.typing import Rect
 from time import sleep
 from .types import Image
-from .acv import screen_cap, detect_grid, detect_digits, get_state
+from .acv import screen_cap, detect_grid, detect_digits, get_state, Recognizer
 from .utils import dbg_show, dbg_profile, dbg_close
 
 
@@ -14,6 +14,8 @@ class Agent:
         self.sct: MSSBase = mss.mss()
         self.bRect: Rect = (-1, -1, -1, -1)
         self.tracked: bool = False
+        self.recognizer: Recognizer = Recognizer()
+
     def run(self) -> None:
         while True:
 
@@ -35,5 +37,9 @@ class Agent:
             if not sts2:
                 sleep(self.LATENCY_PASSIVE)
                 continue
-            # sts3, g_state = dbg_profile(get_state, digits)
+            sts3, state = dbg_profile(get_state, digits, self.recognizer)
+            if not sts3:
+                sleep(self.LATENCY_PASSIVE)
+                continue
+            
             sleep(self.LATENCY_ACTIVE)
