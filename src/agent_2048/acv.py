@@ -6,12 +6,12 @@ from mss.base import MSSBase
 from mss.models import Monitor
 from enum import IntEnum
 from .types import Image, Template, Symbol, CTopology, RectLayout
-from typing import Tuple, List, Any, Dict, Set
+from typing import Tuple, List, Any, Set, Callable
 from .utils import dbg_show, dbg_profile, dbg_close
 from typing import NamedTuple
+from math import log, exp
 
 GRID_CLL_COUNT: int = 16
-
 
 
 def screen_cap(sct: MSSBase, b_rect: Rect) -> Image:
@@ -36,7 +36,7 @@ def detect_grid(img: Image) -> Tuple[bool, Image, Rect]:
     """
     CLEARANCE: float = 0.01
     MINIMUM: float = 500.0
-    CNNY_UPPER: float = 180.0
+    CNNY_UPPER: float = 100.0
     CNNY_LOWER: float = 60.0
     ASP_MIN: float = 1.0 - CLEARANCE
     ASP_MAX: float = 1.0 + CLEARANCE
@@ -110,7 +110,7 @@ def detect_digits(grid: Image) -> Tuple[bool, List[Image]]:
     """
     Detects and crops cells of the digits in the grid.
     """
-    CNNY_UPPER: float = 180.0
+    CNNY_UPPER: float = 100.0
     CNNY_LOWER: float = 60.0
     CLL_CRP: float = 0.15
     CLL_X_BIAS: int = 0
@@ -205,36 +205,41 @@ class Recognizer:
         self.is_recognized: List[bool] = [False for _ in range(SYMBOL_COUNT)]
         rng: np.random.Generator = np.random.default_rng()
         self.template_images: List[Image] = [
-           rng.integers(0, np.iinfo(np.uint8).max, (TMPLT_Y, TMPLT_X), dtype=np.uint8) for _ in range(SYMBOL_COUNT)
+            rng.integers(0, np.iinfo(np.uint8).max, (TMPLT_Y, TMPLT_X), dtype=np.uint8)
+            for _ in range(SYMBOL_COUNT)
         ]
-        self.exp_diff: int = 2
-        self.max_loss_y: float = TMPLT_X * ((TMPLT_Y * 255) ** self.exp_diff)
-        self.max_loss_x: float = TMPLT_Y * ((TMPLT_X * 255) ** self.exp_diff)
         self.templates: List[Template] = [
             (
-                np.full(fill_value=np.iinfo(np.int32).max, dtype=np.int32, shape=TMPLT_X),
-                np.full(fill_value=np.iinfo(np.int32).max, dtype=np.int32, shape=TMPLT_Y)
+                np.full(
+                    fill_value=np.finfo(np.float32).max,
+                    dtype=np.float32,
+                    shape=TMPLT_X // 2,
+                ),
+                np.full(
+                    fill_value=np.finfo(np.float32).max,
+                    dtype=np.float32,
+                    shape=TMPLT_Y // 2,
+                ),
             )
             for _ in range(SYMBOL_COUNT)
         ]
-       
 
     def reduce(self, img: Image) -> Template:
         """
         Normalizes and reduces the image into a pixel density histogram for both axes.
         """
-        return (
-            np.sum(img, axis=0, dtype=np.int32),
-            np.sum(img, axis=1, dtype=np.int32),
-        )
+        y_dst: np.ndarray[Any, Any] = np.sum(img[:], axis=0, dtype=np.float32)
+        x_dst: np.ndarray[Any, Any] = np.sum(img, axis=1, dtype=np.float32)
+        return (y_dst / (np.sum(y_dst) + 10e-5), x_dst / (np.sum(x_dst) + 10e-5))
 
     def _getsim(self, tmplt: Template, sym: Symbol) -> float:
+        if not self.is_recognized[sym]:
+            return 0.0
         a: Template = tmplt
         b: Template = self.templates[sym]
-        ly: float = np.sum((a[0] - b[0]) ** self.exp_diff)
-        lx: float = np.sum((a[1] - b[1]) ** self.exp_diff)
-        lt: float = max(lx / self.max_loss_x, ly / self.max_loss_y)
-        return 1 - lt
+        ly: float = np.sum((a[0] - b[0]) ** 2)
+        lx: float = np.sum((a[1] - b[1]) ** 2)
+        return 1 - (ly + lx)
 
     def match(self, img: Image) -> Tuple[int, float]:
         """
@@ -244,7 +249,6 @@ class Recognizer:
         """
         CNNY_UPPER: float = 180.0
         CNNY_LOWER: float = 60.0
-
         cny: Image = cv.Canny(img, CNNY_LOWER, CNNY_UPPER)
         cntrs, _ = cv.findContours(cny, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
         bboxes: List[Rect] = sorted(
@@ -272,7 +276,7 @@ class Recognizer:
         for s, _ in dgts:
             pr *= 10
             pr += s
-        return (pr, sum([si for _, si in dgts]) / len(dgts))
+        return (pr, min(dgts, key=lambda e: e[1])[1])
 
     def add_template(self, img: Image, val: int) -> None:
         """
@@ -293,8 +297,14 @@ class Recognizer:
             self.is_recognized[Symbol.EMPTY] = True
             self.templates[Symbol.EMPTY] = self.reduce(rsz_img)
             self.template_images[Symbol.EMPTY] = rsz_img
+            return
         n: int = val
 
+        # You NEED to check for this. (Took 5 hours to find this bug.)
+        # This results in 0 getting polluted by the MSD of some random tile
+        # whenever this invariant isn't met.
+        if len(str(n)) != len(bboxes):
+            return
         for bbox in bboxes:
             x, y, w, h = bbox
             c_digit: int = n % 10
@@ -405,5 +415,7 @@ def get_state(
             state.append((0, 1.0))
             continue
         out, sc = rcg.match(d)
+        if out & (out - 1) != 0:
+            return (False, tuple(state))
         state.append((out, float(sc)))
     return (True, tuple(state))

@@ -3,7 +3,7 @@ from typing import Any, Tuple
 from enum import IntEnum
 
 type Image = np.ndarray[Any, Any]
-type Template = Tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]]
+type Template = Tuple[np.ndarray[Any, Any], ...]
 
 class Move(IntEnum):
     UP = 0

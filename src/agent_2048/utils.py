@@ -82,7 +82,7 @@ def show_dbg_state(
         "ACQUIRED" if agnt.tracked else "LOST",
         (10, 20),
         cv.FONT_HERSHEY_PLAIN,
-        1.3,
+        1,
         (0, 255, 0),
         1,
     )
@@ -105,7 +105,8 @@ def show_dbg_state(
                     CNNY_UPPER,
                 )
                 if game_state:
-                    cntrs, _hrchy = cv.findContours(
+                    clr: Tuple[int, int, int] = (0, 255, 0) if game_state[idx][0] & (game_state[idx][0] - 1) == 0 else (0, 0, 255)
+                    cntrs, _ = cv.findContours(
                         cnnd, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE
                     )
                     for cntr in cntrs:
@@ -117,7 +118,7 @@ def show_dbg_state(
                             ],
                             (cx, cy),
                             (cx + cw, cy + ch),
-                            (0, 255, 0),
+                            clr,
                             1,
                         )
                     cv.putText(
@@ -129,7 +130,7 @@ def show_dbg_state(
                         (5, 10),
                         cv.FONT_HERSHEY_PLAIN,
                         0.8,
-                        (0, 255, 0),
+                        clr,
                         1,
                     )
 
