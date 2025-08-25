@@ -237,8 +237,8 @@ class Recognizer:
             return 0.0
         a: Template = tmplt
         b: Template = self.templates[sym]
-        ly: float = np.sum((a[0] - b[0]) ** 2)
-        lx: float = np.sum((a[1] - b[1]) ** 2)
+        ly: float = np.sum(np.abs(a[0] - b[0]))
+        lx: float = np.sum(np.abs(a[1] - b[1])) 
         return 1 - (ly + lx)
 
     def match(self, img: Image) -> Tuple[int, float]:
@@ -300,7 +300,7 @@ class Recognizer:
             return
         n: int = val
 
-        # You NEED to check for this. (Took 5 hours to find this bug.)
+        # It NEEDS to check for this. (Took 5 hours to find this bug.)
         # This results in 0 getting polluted by the MSD of some random tile
         # whenever this invariant isn't met.
         if len(str(n)) != len(bboxes):
