@@ -59,6 +59,12 @@ def get_move(
             return (False, Move.NULL, ())
     # TODO: Callers for expectimax, Pure MC, MCTS, random.
     # Random move placeholder.
-    mv: Move = choice((Move.UP, Move.DOWN, Move.LEFT, Move.RIGHT))
-    return (True, mv, get_nstate(state, mv))
+    rst: Tuple[int, ...] = tuple([s[0] for s in state])
+    mvs: Tuple[Move, ...] = (Move.UP, Move.DOWN, Move.LEFT, Move.RIGHT)
+    states: List[Tuple[int, ...]] = [get_nstate(state, m) for m in mvs]
+    vmvs: List[Move] = [mvs[i] for i, st in enumerate(states) if st != rst]
+    if vmvs:
+        mv: Move = choice(vmvs)
+        return (True, mv, states[mvs.index(mv)])
+    return (False, Move.NULL, ())
     

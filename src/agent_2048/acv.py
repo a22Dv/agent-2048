@@ -5,27 +5,13 @@ from copy import copy
 from mss.base import MSSBase
 from mss.models import Monitor
 from enum import IntEnum
-from .types import Image, Template
+from .types import Image, Template, Symbol, CTopology, RectLayout
 from typing import Tuple, List, Any, Dict, Set
 from .utils import dbg_show, dbg_profile, dbg_close
 from typing import NamedTuple
 
 GRID_CLL_COUNT: int = 16
 
-
-class CTopology(IntEnum):
-    NEXT = 0
-    PREVIOUS = 1
-    FIRST_CHILD = 2
-    PARENT = 3
-    NULL = -1
-
-
-class RectLayout(IntEnum):
-    X_COORD = 0
-    Y_COORD = 1
-    WIDTH = 2
-    HEIGHT = 3
 
 
 def screen_cap(sct: MSSBase, b_rect: Rect) -> Image:
@@ -66,6 +52,9 @@ def detect_grid(img: Image) -> Tuple[bool, Image, Rect]:
     cnt_wch: List[np.ndarray[Any, Any]] = [
         cn for i, cn in enumerate(contours) if wch_msk[i]
     ]
+    # There are times where 0 contours pass this filter.
+    if not cnt_wch:
+        return (False, img, (-1, -1, -1, -1))
     # Filter by aspect ratio.
     cnt_rect: np.ndarray[Any, Any] = np.array(
         [cv.boundingRect(cnt) for cnt in cnt_wch], dtype=np.float32
@@ -123,7 +112,6 @@ def detect_digits(grid: Image) -> Tuple[bool, List[Image]]:
     """
     CNNY_UPPER: float = 180.0
     CNNY_LOWER: float = 60.0
-    EDGE_TOLERANCE: int = 10
     CLL_CRP: float = 0.15
     CLL_X_BIAS: int = 0
     CLL_Y_BIAS: int = -1
@@ -146,13 +134,13 @@ def detect_digits(grid: Image) -> Tuple[bool, List[Image]]:
             cells,
         )
     )
+    EDGE_TOLERANCE: int = mx_c[RectLayout.HEIGHT] // 2
     fc.sort(
         key=lambda e: (
             e[RectLayout.Y_COORD] // EDGE_TOLERANCE,
             e[RectLayout.X_COORD] // EDGE_TOLERANCE,
         )
     )
-
     # Crop, adjust, and get average area.
     clpx: List[Image] = []
     avg: float = 0.0
@@ -173,7 +161,6 @@ def detect_digits(grid: Image) -> Tuple[bool, List[Image]]:
     for i, cl in enumerate(fc):
         x, y, w, h = cl
         cll_gscl: Image = cv.cvtColor(cgrid[y : y + h, x : x + w], cv.COLOR_RGB2GRAY)
-
         # Standard deviation is used to threshold empty cells.
         std_dev: float = float(np.std(cll_gscl))
         _, cth = (
@@ -202,20 +189,6 @@ def detect_digits(grid: Image) -> Tuple[bool, List[Image]]:
     return (True, clpx)
 
 
-class Symbol(IntEnum):
-    S0 = 0
-    S1 = 1
-    S2 = 2
-    S3 = 3
-    S4 = 4
-    S5 = 5
-    S6 = 6
-    S7 = 7
-    S8 = 8
-    S9 = 9
-    EMPTY = 10
-
-
 TMPLT_X: int = 32
 TMPLT_Y: int = 64
 SYMBOL_COUNT: int = 11
@@ -230,16 +203,21 @@ class Recognizer:
     def __init__(self) -> None:
         self.bootstrapped: bool = False
         self.is_recognized: List[bool] = [False for _ in range(SYMBOL_COUNT)]
-        self.templates: List[Template] = [
-            (
-                np.zeros(dtype=np.int32, shape=(TMPLT_X,)),
-                np.zeros(dtype=np.int32, shape=(TMPLT_Y,)),
-            )
-            for _ in range(SYMBOL_COUNT)
+        rng: np.random.Generator = np.random.default_rng()
+        self.template_images: List[Image] = [
+           rng.integers(0, np.iinfo(np.uint8).max, (TMPLT_Y, TMPLT_X), dtype=np.uint8) for _ in range(SYMBOL_COUNT)
         ]
         self.exp_diff: int = 2
         self.max_loss_y: float = TMPLT_X * ((TMPLT_Y * 255) ** self.exp_diff)
         self.max_loss_x: float = TMPLT_Y * ((TMPLT_X * 255) ** self.exp_diff)
+        self.templates: List[Template] = [
+            (
+                np.full(fill_value=np.iinfo(np.int32).max, dtype=np.int32, shape=TMPLT_X),
+                np.full(fill_value=np.iinfo(np.int32).max, dtype=np.int32, shape=TMPLT_Y)
+            )
+            for _ in range(SYMBOL_COUNT)
+        ]
+       
 
     def reduce(self, img: Image) -> Template:
         """
@@ -312,7 +290,9 @@ class Recognizer:
         )
         if len(bboxes) == 0 and not self.is_recognized[Symbol.EMPTY]:
             rsz_img: Image = cv.resize(img, (TMPLT_X, TMPLT_Y))
+            self.is_recognized[Symbol.EMPTY] = True
             self.templates[Symbol.EMPTY] = self.reduce(rsz_img)
+            self.template_images[Symbol.EMPTY] = rsz_img
         n: int = val
 
         for bbox in bboxes:
@@ -323,6 +303,7 @@ class Recognizer:
                 continue
             rsz_digit: Image = cv.resize(img[y : y + h, x : x + w], (TMPLT_X, TMPLT_Y))
             self.templates[c_digit] = self.reduce(rsz_digit)
+            self.template_images[c_digit] = rsz_digit
             self.is_recognized[c_digit] = True
 
     def bootstrap(self, clls: List[Image]) -> None:
@@ -347,9 +328,9 @@ class Recognizer:
                 cnd, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE
             )
             if len(cccntrs) == 0:
-                if not self.is_recognized[Symbol.EMPTY]:
-                    unq_sym += 1
-                self.is_recognized[Symbol.EMPTY] = True
+                if self.is_recognized[Symbol.EMPTY]:
+                    continue
+                unq_sym += 1
                 rcgnz[0] = True
                 self.add_template(dgt, -1)
                 continue
@@ -379,14 +360,16 @@ class Recognizer:
 
             # Set digit.
             if in_cntr == 0:
-                if not self.is_recognized[Symbol.S2]:
-                    unq_sym += 1
+                if self.is_recognized[Symbol.S2]:
+                    continue
+                unq_sym += 1
                 rcgnz[1] = True
                 self.add_template(dgt, 2)
                 continue
             elif in_cntr == 1:
-                if not self.is_recognized[Symbol.S4]:
-                    unq_sym += 1
+                if self.is_recognized[Symbol.S4]:
+                    continue
+                unq_sym += 1
                 rcgnz[2] = True
                 self.add_template(dgt, 4)
                 continue
