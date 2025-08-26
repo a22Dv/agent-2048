@@ -170,21 +170,9 @@ def show_dbg_state(
         (0, 255, 0),
         1,
     )
-    mv_s: str = ""
-    match mv:
-        case Move.UP:
-            mv_s = "UP"
-        case Move.DOWN:
-            mv_s = "DOWN"
-        case Move.LEFT:
-            mv_s = "LEFT"
-        case Move.RIGHT:
-            mv_s = "RIGHT"
-        case Move.NULL:
-            mv_s = "NULL"
     cv.putText(
         tbox,
-        f"MOVE: {mv_s}",
+        f"MOVE: {mv.name}",
         (5, 50),
         cv.FONT_HERSHEY_PLAIN,
         0.8,

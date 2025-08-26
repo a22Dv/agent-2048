@@ -1,7 +1,8 @@
 from typing import Tuple, List
-from .types import Move
+from .types import Move, Evaluation
 from random import choice
 from copy import copy
+from .eval import evaluate
 
 GRID_SIDE_LENGTH: int = 4
 GRID_CLL_COUNT: int = 16
@@ -56,15 +57,13 @@ def get_move(
 ) -> Tuple[bool, Move, Tuple[int, ...]]:
     for n, _ in state:
         if (n & (n - 1)) != 0:
-            return (False, Move.NULL, ())
-    # TODO: Callers for expectimax, Pure MC, MCTS, random.
-    # Random move placeholder.
+            return (False, Move.NONE, ())
     rst: Tuple[int, ...] = tuple([s[0] for s in state])
     mvs: Tuple[Move, ...] = (Move.UP, Move.DOWN, Move.LEFT, Move.RIGHT)
     states: List[Tuple[int, ...]] = [get_nstate(state, m) for m in mvs]
     vmvs: List[Move] = [mvs[i] for i, st in enumerate(states) if st != rst]
     if vmvs:
-        mv: Move = choice(vmvs)
+        mv: Move = Move(evaluate(rst, Evaluation.AUTO))
         return (True, mv, states[mvs.index(mv)])
-    return (False, Move.NULL, ())
+    return (False, Move.NONE, ())
     

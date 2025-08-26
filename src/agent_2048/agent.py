@@ -1,6 +1,7 @@
 import mss
 import pyautogui
 import logging
+from pytweening import easeInOutQuad
 from pyautogui import leftClick, moveTo
 from pydirectinput import press
 from mss.base import MSSBase
@@ -24,7 +25,7 @@ class Agent:
         self.recognizer: Recognizer = Recognizer()
         self.predicted_state: Tuple[int, ...] = ()
         pyautogui.PAUSE = 0.00
-        pyautogui.MINIMUM_SLEEP = 0.00
+        pyautogui.MINIMUM_SLEEP = 0.01
         pyautogui.MINIMUM_DURATION = 0.00
         logging.basicConfig(
             level=logging.INFO,
@@ -37,7 +38,9 @@ class Agent:
         if not self.tracked:
             return
         x, y, w, h = self.bRect
-        moveTo(x + w // 2, y + h // 2, duration=0.0)
+        mx, my = pyautogui.position()
+        if not (x < mx < x + w and y < my < my + h):
+            moveTo(x + w // 2, y + h // 2, duration=0.25, tween=easeInOutQuad)
         leftClick(duration=0.0)
         match move:
             case Move.UP:
@@ -70,7 +73,7 @@ class Agent:
                 logging.info("Board cannot be detected.")
                 self.bRect = (-1, -1, -1, -1)
                 self.tracked = False
-                show_dbg_state(None, self, rts, grid, [], False, Move.NULL)
+                show_dbg_state(None, self, rts, grid, [], False, Move.NONE)
                 sleep(self.LATENCY_PASSIVE)
                 continue
             # Only reached whenever it acquires the board again.
@@ -81,14 +84,14 @@ class Agent:
             sts2, digits = detect_digits(grid)
             if not sts2:
                 logging.warning("Tiles cannot be disambiguated.")
-                show_dbg_state(None, self, rts, grid, [], False, Move.NULL)
+                show_dbg_state(None, self, rts, grid, [], False, Move.NONE)
                 sleep(self.LATENCY_PASSIVE)
                 continue
             self._update_templates(self.predicted_state, digits)
             sts3, state = get_state(digits, self.recognizer)
             if not sts3:
                 logging.warning("Digits cannot be recognized.")
-                show_dbg_state(None, self, rts, grid, digits, False, Move.NULL)
+                show_dbg_state(None, self, rts, grid, digits, False, Move.NONE)
                 sleep(self.LATENCY_PASSIVE)
                 continue
             sts4, move, self.predicted_state = get_move(state)

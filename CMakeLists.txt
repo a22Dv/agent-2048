@@ -12,4 +12,7 @@ target_include_directories(
     "${CMAKE_SOURCE_DIR}/venv/include" 
     "${CMAKE_SOURCE_DIR}/include"
 )
-target_compile_options(eval PRIVATE /EHsc)
+
+# Increased step limit due to look-up table initialization requiring more steps.
+target_compile_options(eval PRIVATE /EHsc -Xclang -fconstexpr-steps=80000000)
+target_compile_features(eval PRIVATE cxx_std_17)

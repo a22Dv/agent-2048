@@ -1,15 +1,11 @@
 import cv2 as cv
 import numpy as np
 from cv2.typing import Rect
-from copy import copy
 from mss.base import MSSBase
 from mss.models import Monitor
-from enum import IntEnum
 from .types import Image, Template, Symbol, CTopology, RectLayout
-from typing import Tuple, List, Any, Set, Callable
-from .utils import dbg_show, dbg_profile, dbg_close
+from typing import Tuple, List, Any, Set
 from typing import NamedTuple
-from math import log, exp
 
 GRID_CLL_COUNT: int = 16
 

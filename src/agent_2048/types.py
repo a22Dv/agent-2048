@@ -5,13 +5,15 @@ from enum import IntEnum
 type Image = np.ndarray[Any, Any]
 type Template = Tuple[np.ndarray[Any, Any], ...]
 
+
 class Move(IntEnum):
     UP = 0
     DOWN = 1
-    LEFT= 2
+    LEFT = 2
     RIGHT = 3
-    NULL = 4
-    
+    NONE = 4
+
+
 class Symbol(IntEnum):
     S0 = 0
     S1 = 1
@@ -24,6 +26,7 @@ class Symbol(IntEnum):
     S8 = 8
     S9 = 9
     EMPTY = 10
+
 
 class CTopology(IntEnum):
     NEXT = 0
@@ -38,3 +41,10 @@ class RectLayout(IntEnum):
     Y_COORD = 1
     WIDTH = 2
     HEIGHT = 3
+
+
+class Evaluation(IntEnum):
+    AUTO = 0
+    MC = 1
+    MCTS = 2
+    EXPMAX = 3
