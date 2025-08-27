@@ -8,10 +8,10 @@ from mss.base import MSSBase
 from cv2.typing import Rect
 from time import sleep, perf_counter
 from typing import Tuple, List
-from .types import Image, Move
+from .types import Image
 from .acv import screen_cap, detect_grid, detect_digits, get_state, Recognizer
 from .utils import show_dbg_state
-from .evl import get_move
+from .evl import get_move, Move
 
 
 class Agent:

@@ -1,12 +1,12 @@
 #include "eval.hpp"
 #include <array>
+#include <immintrin.h>
 #include <random>
 #include <x86intrin.h>
 
-
 namespace eval2048 {
 
-Move evaluate(std::array<std::uint16_t, cellCount> rstate, std::uint8_t type) {
+Move evaluate(const std::array<std::uint16_t, cellCount> rstate, const std::uint8_t type) {
     std::array<std::uint16_t, cellCount> state{[&] {
         std::array<std::uint16_t, cellCount> out{};
         for (std::size_t i{0}; i < cellCount; ++i) {
@@ -14,56 +14,100 @@ Move evaluate(std::array<std::uint16_t, cellCount> rstate, std::uint8_t type) {
         }
         return out;
     }()};
-    switch (static_cast<Evaluation>(type)) {
-    case Evaluation::AUTO: {
-        const std::uint32_t empty{[&] {
-            std::uint32_t emp{};
-            for (std::uint16_t v : state) {
-                if (v == 0) {
-                    emp++;
-                }
-            }
-            return emp;
-        }()};
-        const float fr{1 - static_cast<float>(empty) / 16};
-        if (fr < 0.25) {
-            return mc(State{state});
-        } else if (fr < 0.75) {
-            return mcts(State{state});
-        } else {
-            return expmax(State{state});
-        }
-    }
-    case Evaluation::MC: return mc(State{state});
-    case Evaluation::MCTS: return mcts(State{state});
-    case Evaluation::EXPMAX: return expmax(State{state});
-    }
+    return monteCarlo(State{state});
 }
 
-Move mc(const State state) {
-    constexpr std::size_t simulations{1'000'000};
+namespace detail {
+
+std::uint32_t xorShift32() {
+    static std::random_device rd{};
+    static std::uint32_t st{rd()};
+    st ^= st << 13;
+    st ^= st >> 17;
+    st ^= st << 5;
+    return st;
+}
+consteval std::array<std::uint64_t, UINT16_MAX + 1> initRLut() {
+    std::array<std::uint64_t, UINT16_MAX + 1> out{};
+    for (std::uint64_t e{0}; e < UINT16_MAX + 1; ++e) {
+        std::size_t offset{0};
+        for (std::uint64_t i{0}; i < cellCount; ++i) {
+            if (((e >> i) & 0x1) == 1) {
+                out[e] |= i << offset;
+                offset += 4;
+            }
+        }
+    }
+    return out;
+}
+constexpr std::array<std::uint64_t, UINT16_MAX + 1> rLut{initRLut()};
+State randTile(const State in) {
+    const std::uint64_t t{xorShift32() % 10 == 9 ? 2ull : 1ull};
+    constexpr std::uint64_t m4{0xCCCC'CCCC'CCCC'CCCC};
+    constexpr std::uint64_t m2{0xAAAA'AAAA'AAAA'AAAA};
+    constexpr std::uint64_t mLsb{0x1111'1111'1111'1111};
+    const std::uint64_t i4{in.data | ((in.data & m4) >> 2)};
+    const std::uint64_t r{(~(i4 | ((i4 & m2) >> 1)) & mLsb)};
+    if (r == 0) {
+        return in;
+    }
+    const std::uint64_t lutIdx{_pext_u64(r, mLsb)};
+    const std::uint64_t cnt{static_cast<std::uint64_t>(_mm_popcnt_u64(lutIdx))};
+    const std::uint64_t loc{xorShift32() % cnt};
+    return State{in.data | t << (((rLut[lutIdx] >> (loc * 4)) & 0xF) * 4)};
+}
+
+} // namespace detail
+
+
+
+Move monteCarlo(const State state) {
+    static std::array<float, 2> weights{0.5f, 2.0f};
+    constexpr std::size_t simulations{200'000};
     constexpr std::array<Move, 4> moves{Move::UP, Move::DOWN, Move::LEFT, Move::RIGHT};
+    std::array<std::uint64_t, 4> simCounts{};
+    std::array<std::uint64_t, 4> steps{};
     std::array<std::uint64_t, 4> scores{};
-    std::random_device rd{};
-    std::minstd_rand rand{};
-    rand.seed(rd());
-    std::uniform_int_distribution<int> dst{0, 4};
     if (state.ended()) {
         return Move::NONE;
     }
-    for (std::size_t s{0}; s < simulations; ++s) {;
+    for (std::size_t s{0}; s < simulations; ++s) {
         State st{state};
-        Move imv{moves[dst(rand)]};
-        while (true) {
-            Move mv{moves[dst(rand)]};
-            st = detail::move(st, mv);
-            scores[static_cast<std::size_t>(imv)] = 
+        Move imv{moves[detail::xorShift32() % 4]};
+        State imvst = detail::move(st, imv, scores[static_cast<std::size_t>(imv)]);
+        if (st.data == imvst.data) {
+            continue;
         }
+        imvst = detail::randTile(imvst);
+        while (!imvst.ended()) {
+            steps[static_cast<std::size_t>(imv)]++;
+            Move mv{moves[detail::xorShift32() % 4]};
+            State ost{imvst};
+            imvst = detail::move(imvst, mv, scores[static_cast<std::size_t>(imv)]);
+            if (imvst.data == ost.data) {
+                continue;
+            }
+            imvst = detail::randTile(imvst);
+        }
+        simCounts[static_cast<std::size_t>(imv)]++;
     };
+    Move mxMv{Move::NONE};
+    float mxSc{-1.0f};
+    std::array<float, 4> hSc{};
+    for (std::size_t i{0}; i < 4; ++i) {
+        if (simCounts[i] == 0) {
+            continue;
+        }
+        const float avgSc{static_cast<float>(scores[i]) / simCounts[i]};
+        const float avgSteps{static_cast<float>(steps[i]) / simCounts[i]};
+        const float sc{avgSc * weights[0] + avgSteps * weights[1]};
+        hSc[i] = sc;
+        if (sc > mxSc) {
+            mxMv = moves[i];
+            mxSc = sc;
+        }
+    }
+    return mxMv;
 }
-
-Move mcts(const State state) { return Move::NONE; }
-
-Move expmax(const State state) { return Move::NONE; }
 
 } // namespace eval2048

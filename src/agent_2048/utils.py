@@ -1,13 +1,9 @@
 import cv2 as cv
 import numpy as np
-from cv2.typing import Rect
-from .types import Image, Symbol, Move
-from typing import Callable, Any, Tuple, List, TYPE_CHECKING
+from .evl import Move
+from .types import Image, Symbol
+from typing import Callable, Any, Tuple, List
 from time import perf_counter
-from copy import copy
-
-if TYPE_CHECKING:
-    from .agent import Agent
 
 
 def wait(key: str) -> bool:
@@ -105,7 +101,11 @@ def show_dbg_state(
                     CNNY_UPPER,
                 )
                 if game_state:
-                    clr: Tuple[int, int, int] = (0, 255, 0) if game_state[idx][0] & (game_state[idx][0] - 1) == 0 else (0, 0, 255)
+                    clr: Tuple[int, int, int] = (
+                        (0, 255, 0)
+                        if game_state[idx][0] & (game_state[idx][0] - 1) == 0
+                        else (0, 0, 255)
+                    )
                     cntrs, _ = cv.findContours(
                         cnnd, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE
                     )

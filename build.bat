@@ -1,8 +1,9 @@
 @echo off
 
-cmake --preset wclang-debug
-cmake --build build\debug
-copy .\build\debug\eval.cp313-win_amd64.pyd .\src\agent_2048\
+cmake --preset wclang-release
+cmake --build build\release
+copy .\build\release\eval.cp313-win_amd64.pyd .\src\agent_2048\
+:: copy .\build\release\eval.pdb .\venv\scripts\
 
 :: Somehow doesn't accept going to src directory via the command
 :: so we manually cd there instead.

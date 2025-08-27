@@ -14,5 +14,5 @@ target_include_directories(
 )
 
 # Increased step limit due to look-up table initialization requiring more steps.
-target_compile_options(eval PRIVATE /EHsc -Xclang -fconstexpr-steps=80000000)
-target_compile_features(eval PRIVATE cxx_std_17)
+target_compile_options(eval PRIVATE -march=native /EHsc -Xclang -fconstexpr-steps=80000000)
+target_compile_features(eval PRIVATE cxx_std_20)

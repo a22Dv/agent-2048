@@ -1,8 +1,7 @@
 from typing import Tuple, List
-from .types import Move, Evaluation
 from random import choice
 from copy import copy
-from .eval import evaluate
+from .eval import evaluate, Move, Evaluation
 
 GRID_SIDE_LENGTH: int = 4
 GRID_CLL_COUNT: int = 16
@@ -55,15 +54,17 @@ def get_nstate(state: Tuple[Tuple[int, float], ...], mv: Move) -> Tuple[int, ...
 def get_move(
     state: Tuple[Tuple[int, float], ...],
 ) -> Tuple[bool, Move, Tuple[int, ...]]:
+    
     for n, _ in state:
         if (n & (n - 1)) != 0:
             return (False, Move.NONE, ())
     rst: Tuple[int, ...] = tuple([s[0] for s in state])
-    mvs: Tuple[Move, ...] = (Move.UP, Move.DOWN, Move.LEFT, Move.RIGHT)
+    mvs: Tuple[Move, ...] = (Move.UP, Move.DOWN, Move.LEFT, Move.RIGHT, Move.NONE)
     states: List[Tuple[int, ...]] = [get_nstate(state, m) for m in mvs]
-    vmvs: List[Move] = [mvs[i] for i, st in enumerate(states) if st != rst]
-    if vmvs:
-        mv: Move = Move(evaluate(rst, Evaluation.AUTO))
-        return (True, mv, states[mvs.index(mv)])
-    return (False, Move.NONE, ())
+    mv: Move = Move(evaluate(rst, Evaluation.MC))
+    return (True, mv, states[mvs.index(mv)])
+    # if vmvs:
+    #     rmv: Move = choice(vmvs)
+    #     return (True, rmv, states[mvs.index(rmv)])
+    # return (False, Move.NONE, ())
     

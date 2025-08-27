@@ -1,8 +1,6 @@
 #pragma once
-
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
-
 #include <array>
 #include <cstdint>
 
@@ -52,6 +50,7 @@ struct State {
             Order is important here. The latter checks will give garbage results if
             T4 is 0 in [T4, T3, T2, T1] per 16-bit word during a XOR op.
         */
+        constexpr std::uint64_t mh{0xF000'F000'F000'F000};
         constexpr std::uint64_t m4{0xCCCC'CCCC'CCCC'CCCC};
         constexpr std::uint64_t m2{0xAAAA'AAAA'AAAA'AAAA};
         constexpr std::uint64_t mLsb{0x1111'1111'1111'1111};
@@ -60,7 +59,7 @@ struct State {
         if (r != 0) {
             return false;
         }
-        const std::uint64_t diffX{data ^ (data >> 4)};
+        const std::uint64_t diffX{(data ^ (data >> 4)) | mh};
         const std::uint64_t ix{diffX | ((diffX & m4) >> 2)};
         const std::uint64_t rx{(~(ix | ((ix & m2) >> 1)) & mLsb)};
         if (rx != 0) {
@@ -100,11 +99,12 @@ constexpr State transpose(const State s) {
     return State{tr42x2};
 }
 
-constexpr State merge(const State s) {
+constexpr State merge(const State s, std::uint16_t &outSc) {
     std::array<std::uint16_t, cellCount> sa{s.getDataAsExpanded()};
     for (std::size_t i{1}; i < 4; ++i) {
         if (sa[i - 1] == sa[i] && sa[i] != 0) {
             sa[i - 1]++;
+            outSc += 1 << sa[i - 1];
             sa[i] = 0;
         }
     }
@@ -128,7 +128,7 @@ constexpr State slide(const State s) {
 
 } // namespace detail
 
-constexpr std::array<LutEntry, lutEntries> initLut() {
+consteval std::array<LutEntry, lutEntries> initLut() {
     std::array<LutEntry, lutEntries> lut{};
     for (std::uint32_t r{0}; r <= UINT16_MAX; ++r) {
         /*
@@ -136,24 +136,9 @@ constexpr std::array<LutEntry, lutEntries> initLut() {
             be cast back to std::uint16_t later.
         */
         State s{static_cast<uint64_t>(r)};
-        State ss{detail::slide(s)};
         std::uint16_t sc{};
-        std::uint64_t maskSc{0xFF};
-        bool tg{false};
-        for (std::uint8_t i{0}; i < 3; ++i) {
-            if (tg) {
-                tg = false;
-                maskSc <<= 4;
-                continue;
-            }
-            std::uint64_t mData{(ss.data & maskSc) >> (i * 4)};
-            if ((mData & 0xF) == ((mData >> 4) & 0xF) && ((mData & 0xF) != 0)) {
-                sc += 0x1 << ((mData & 0xF) + 1);
-                tg = true;
-            }
-            maskSc <<= 4;
-        }
-        State ms{detail::merge(ss)};
+        State ss{detail::slide(s)};
+        State ms{detail::merge(ss, sc)};
         State sms{detail::slide(ms)};
         lut[r] = LutEntry{sc, static_cast<std::uint16_t>(sms.data)};
     }
@@ -164,48 +149,43 @@ constexpr std::array<LutEntry, lutEntries> lut{initLut()};
 
 namespace detail {
 
-constexpr State mvL(const State s, ) {
-
-    // TODO: Get score.
+constexpr State mvL(const State s, std::uint64_t &score) {
     constexpr std::uint64_t m{0xFFFF};
-    constexpr std::uint64_t sc{};
-    const std::uint64_t mvr1{lut[s.data & m].out};
-    sc += lut[s.data & m].score;
-    const std::uint64_t mvr2{lut[(s.data >> 16) & m].out};
-    sc += lut[(s.data >> 16) & m].score;
-    const std::uint64_t mvr3{lut[(s.data >> 32) & m].out};
-    sc += lut[(s.data >> 32) & m].score;
-    const std::uint64_t mvr4{lut[(s.data >> 48) & m].out};
-    sc += lut[(s.data >> 48) & m].score;
-    return State{(mvr4 << 48) | (mvr3 << 32) | (mvr2 << 16) | (mvr1)};
+    const LutEntry mvr1{lut[s.data & m]};
+    const LutEntry mvr2{lut[(s.data >> 16) & m]};
+    const LutEntry mvr3{lut[(s.data >> 32) & m]};
+    const LutEntry mvr4{lut[(s.data >> 48) & m]};
+    score += mvr1.score;
+    score += mvr2.score;
+    score += mvr3.score;
+    score += mvr4.score;
+    return State{
+        (static_cast<std::uint64_t>(mvr4.out) << 48) | (static_cast<std::uint64_t>(mvr3.out) << 32) |
+        (static_cast<std::uint64_t>(mvr2.out) << 16) | (static_cast<std::uint64_t>(mvr1.out))
+    };
 }
 
-constexpr State mvR(const State s) { return reverse(mvL(reverse(s))); }
+constexpr State mvR(const State s, std::uint64_t &score) { return reverse(mvL(reverse(s), score)); }
 
-constexpr State mvU(const State s) { return transpose(mvL(transpose(s))); }
+constexpr State mvU(const State s, std::uint64_t &score) { return transpose(mvL(transpose(s), score)); }
 
-constexpr State mvD(const State s) { return transpose(reverse(mvL(reverse(transpose(s))))); }
+constexpr State mvD(const State s, std::uint64_t &score) {
+    return transpose(reverse(mvL(reverse(transpose(s)), score)));
+}
 
-constexpr State move(const State s, const Move m) {
+constexpr State move(const State s, const Move m, std::uint64_t &score) {
     switch (m) {
-    case Move::LEFT: 
-        return mvL(s);
-    case Move::RIGHT: 
-    return mvR(s);
-    case Move::UP: 
-    return mvU(s);
-    case Move::DOWN: 
-    return mvD(s);
-    case Move::NONE: 
-    return State{0};
+    case Move::LEFT: return mvL(s, score);
+    case Move::RIGHT: return mvR(s, score);
+    case Move::UP: return mvU(s, score);
+    case Move::DOWN: return mvD(s, score);
+    case Move::NONE: return State{0};
     };
 }
 
 } // namespace detail
 
-Move evaluate(std::array<std::uint16_t, cellCount> state, std::uint8_t type);
-Move mc(const State state);
-Move mcts(const State state);
-Move expmax(const State state);
+Move evaluate(const std::array<std::uint16_t, cellCount> rstate, const std::uint8_t type);
+Move monteCarlo(const State state);
 
 } // namespace eval2048
