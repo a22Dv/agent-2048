@@ -16,7 +16,7 @@ from .evl import get_move, Move
 
 class Agent:
     def __init__(self) -> None:
-        self.LATENCY_ACTIVE: float = 0.1
+        self.LATENCY_ACTIVE: float = 0.0
         self.LATENCY_PASSIVE: float = 1.5
         self.LATENCY_ERROR: float = 0.05
         self.sct: MSSBase = mss.mss()
@@ -24,9 +24,9 @@ class Agent:
         self.tracked: bool = False
         self.recognizer: Recognizer = Recognizer()
         self.predicted_state: Tuple[int, ...] = ()
-        pyautogui.PAUSE = 0.00
+        pyautogui.PAUSE = 0.01
         pyautogui.MINIMUM_SLEEP = 0.01
-        pyautogui.MINIMUM_DURATION = 0.00
+        pyautogui.MINIMUM_DURATION = 0.01
         logging.basicConfig(
             level=logging.INFO,
             format='%(asctime)s : [%(levelname)s] %(message)s',

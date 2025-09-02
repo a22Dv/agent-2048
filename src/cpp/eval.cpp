@@ -59,8 +59,6 @@ State randTile(const State in) {
 
 } // namespace detail
 
-
-
 Move monteCarlo(const State state) {
     static std::array<float, 2> weights{0.5f, 2.0f};
     constexpr std::size_t simulations{200'000};
@@ -91,20 +89,29 @@ Move monteCarlo(const State state) {
         }
         simCounts[static_cast<std::size_t>(imv)]++;
     };
-    Move mxMv{Move::NONE};
-    float mxSc{-1.0f};
-    std::array<float, 4> hSc{};
-    for (std::size_t i{0}; i < 4; ++i) {
+    float ssc{};
+    float sst{};
+    std::array<float, 4> avgSc{};
+    std::array<float, 4> avgSt{};
+    std::array<float, 4> fRate{};
+    for (std::size_t i{}; i < 4; ++i) {
         if (simCounts[i] == 0) {
             continue;
         }
-        const float avgSc{static_cast<float>(scores[i]) / simCounts[i]};
-        const float avgSteps{static_cast<float>(steps[i]) / simCounts[i]};
-        const float sc{avgSc * weights[0] + avgSteps * weights[1]};
-        hSc[i] = sc;
-        if (sc > mxSc) {
+        avgSc[i] = static_cast<float>(scores[i]) / simCounts[i];
+        avgSt[i] = static_cast<float>(steps[i]) / simCounts[i];
+        ssc += avgSc[i];
+        sst += avgSt[i];
+    }
+    for (std::size_t i{}; i < 4; ++i) {
+        fRate[i] = (avgSc[i] / ssc) * weights[0] + (avgSt[i] / sst) * weights[1];
+    }
+    Move mxMv{Move::NONE};
+    float mxSc{-1.0f};
+    for (std::size_t i{0}; i < 4; ++i) {
+        if (fRate[i] > mxSc) {
             mxMv = moves[i];
-            mxSc = sc;
+            mxSc = fRate[i];
         }
     }
     return mxMv;
